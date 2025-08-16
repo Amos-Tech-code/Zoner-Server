@@ -81,7 +81,7 @@ fun Route.authRoutes() {
         } catch (e: BadRequestException) {
             call.respond(
                 HttpStatusCode.BadRequest,
-                GenericResponse<Unit>(false, e.message ?: "Invalid registration data")
+                GenericResponse<Unit>(false, "Invalid Request")
             )
         } catch (e: ConflictException) {
             call.respond(
@@ -91,7 +91,7 @@ fun Route.authRoutes() {
         } catch (e: Exception) {
             call.respond(
                 HttpStatusCode.InternalServerError,
-                GenericResponse<Unit>(false, "Registration failed: ${e.message}")
+                GenericResponse<Unit>(false, "Registration failed. Something went wrong on our end.")
             )
         }
     }
@@ -102,18 +102,18 @@ fun Route.authRoutes() {
 
             val email = request.email ?: return@post call.respond(
                 HttpStatusCode.BadRequest,
-                GenericResponse(success = false, message = "Email is required", data = null)
+                GenericResponse<Unit>(success = false, message = "Email is required")
             )
 
             val password = request.password ?: return@post call.respond(
                 HttpStatusCode.BadRequest,
-                GenericResponse(success = false, message = "Password is required", data = null)
+                GenericResponse<Unit>(success = false, message = "Password is required")
             )
 
             val authResponse = AuthService.login(email, password)
                 ?: return@post call.respond(
                     HttpStatusCode.Unauthorized,
-                    GenericResponse(success = false, message = "Invalid credentials", data = null)
+                    GenericResponse<Unit>(success = false, message = "Invalid credentials")
                 )
 
             call.respond(
@@ -127,12 +127,12 @@ fun Route.authRoutes() {
         } catch (e: AuthorizationException) {
             call.respond(
                 HttpStatusCode.Forbidden,
-                GenericResponse(success = false, message = e.message ?: "Not authorized", data = null)
+                GenericResponse<Unit>(success = false, message = e.message ?: "Not authorized")
             )
         } catch (e: Exception) {
             call.respond(
                 HttpStatusCode.InternalServerError,
-                GenericResponse(success = false, message = "Login failed", data = null)
+                GenericResponse<Unit>(success = false, message = "Login failed")
             )
         }
     }
