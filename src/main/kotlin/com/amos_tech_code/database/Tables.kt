@@ -15,38 +15,30 @@ object UsersTable : Table("users") {
     val id: Column<UUID> = uuid("id").autoGenerate()
     val email: Column<String> = varchar("email", 255).uniqueIndex()
     val name: Column<String?> = varchar("name", 100).nullable()
-
     // Authentication
     val authProvider: Column<AuthProvider> = enumerationByName("auth_provider", 20, AuthProvider::class)
         .default(AuthProvider.EMAIL)
     val passwordHash: Column<String?> = varchar("password_hash", 255).nullable()
-
     // Profile Data
     val username: Column<String?> = varchar("username", 30).nullable().uniqueIndex()
     val profilePicUrl: Column<String?> = text("profile_pic_url").nullable()
-
     // Email Verification
     val isEmailVerified: Column<Boolean> = bool("is_email_verified").default(false)
     val emailVerifiedAt: Column<LocalDateTime?> = datetime("email_verified_at").nullable()
-
     // Registration Progress
     val registrationStage: Column<RegistrationStage> =
         enumerationByName("registration_stage", 20, RegistrationStage::class)
             .default(RegistrationStage.EMAIL_SUBMITTED)
-
     // Roles
     val role: Column<UserRole> = enumerationByName("role", 20, UserRole::class)
         .default(UserRole.USER)
-
     // Timestamps
     val createdAt: Column<LocalDateTime> = datetime("created_at").clientDefault { now() }
     val updatedAt: Column<LocalDateTime> = datetime("updated_at").clientDefault { now() }
     val lastLoginAt: Column<LocalDateTime?> = datetime("last_login_at").nullable()
-
     // Status Flags
     val isActive: Column<Boolean> = bool("is_active").default(true)
     val isBanned: Column<Boolean> = bool("is_banned").default(false)
-
     // Device Integration
     val fcmToken: Column<String?> = varchar("fcm_token", 255).nullable()
 
@@ -86,6 +78,7 @@ object BusinessProfilesTable : Table("business_profiles") {
     val businessDescription = text("business_description").nullable()
     val businessLogo = text("business_logo").nullable()
     val websiteUrl = text("website_url").nullable()
+    val followerCount = integer("follower_count").default(0)
     val isVerified = bool("is_verified").default(false)
     val verificationRequestedAt = datetime("verification_requested_at").nullable()
     val verifiedAt = datetime("verified_at").nullable()
@@ -94,6 +87,22 @@ object BusinessProfilesTable : Table("business_profiles") {
 
     override val primaryKey = PrimaryKey(id)
 }
+
+object BusinessFollowersTable : Table("business_followers") {
+    val id = uuid("id").autoGenerate()
+    val businessProfileId = (uuid("business_profile_id") references BusinessProfilesTable.id).index()
+    val userId = (uuid("user_id") references UsersTable.id).index()
+    val followedAt = datetime("followed_at").clientDefault { now() }
+    val isMuted = bool("is_muted").default(false) // Optional: for muting notifications
+    val isFavorite = bool("is_favorite").default(false) // Optional: for favoriting businesses
+
+    override val primaryKey = PrimaryKey(id)
+
+    init {
+        uniqueIndex(businessProfileId, userId) // Ensure a user can't follow the same business multiple times
+    }
+}
+
 
 object NotificationsTable : Table("notifications") {
     val id = uuid("id").autoGenerate()

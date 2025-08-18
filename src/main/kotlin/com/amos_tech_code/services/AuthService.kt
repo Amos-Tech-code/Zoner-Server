@@ -92,13 +92,6 @@ object AuthService {
         }
     }
 
-    fun getUserEmailFromID(userId: UUID): String? {
-        return transaction {
-            val user = UsersTable.select { UsersTable.id eq userId }.singleOrNull()
-            user?.get(UsersTable.email)
-        }
-    }
-
     fun completeUserProfile(
         userId: String,
         username: String,
@@ -223,7 +216,7 @@ object AuthService {
             parameter("id_token", idToken)
         }
         val responseBody = response.bodyAsText() // Read as plain text first
-        println("Response Body: $responseBody") // Debug response
+        //println("Response Body: $responseBody") // Debug response
 
         // Parse as JsonObject
         val jsonObject: JsonObject = Json.parseToJsonElement(responseBody).jsonObject
@@ -236,6 +229,96 @@ object AuthService {
             )
         } else {
             null
+        }
+    }
+
+    // In AuthService.kt
+
+    fun registerOAuthUser(
+        name: String,
+        email: String,
+        provider: AuthProvider,
+        role: UserRole = UserRole.USER
+    ): RegisterResult {
+        return transaction {
+            // Check if email exists
+            val existingUser = UsersTable
+                .select { UsersTable.email eq email }
+                .singleOrNull()
+
+            if (existingUser != null) {
+                return@transaction RegisterResult(
+                    userId = existingUser[UsersTable.id].toString(),
+                    currentStage = existingUser[UsersTable.registrationStage].name,
+                    nextAction = when (existingUser[UsersTable.registrationStage]) {
+                        RegistrationStage.EMAIL_SUBMITTED -> "verify_email"
+                        RegistrationStage.EMAIL_VERIFIED -> "complete_profile"
+                        RegistrationStage.PROFILE_COMPLETED -> "login"
+                        else -> "contact_support"
+                    },
+                    verificationCode = null,
+                    isExistingUser = true
+                )
+            }
+
+            // Proceed with new registration
+            val userId = UUID.randomUUID()
+
+            UsersTable.insert {
+                it[id] = userId
+                it[UsersTable.name] = name
+                it[UsersTable.email] = email
+                it[UsersTable.role] = role
+                it[UsersTable.authProvider] = provider
+                it[UsersTable.registrationStage] = RegistrationStage.EMAIL_VERIFIED
+                it[UsersTable.isEmailVerified] = true
+                it[UsersTable.emailVerifiedAt] = LocalDateTime.now()
+            }
+
+            RegisterResult(
+                userId = userId.toString(),
+                currentStage = RegistrationStage.EMAIL_VERIFIED.name,
+                nextAction = "login",
+                isExistingUser = false
+            )
+        }
+    }
+
+    fun oauthLogin(userId: UUID): AuthResponse {
+        return transaction {
+            val user = UsersTable.select { UsersTable.id eq userId }.single()
+            val businessProfile = BusinessProfilesTable
+                .select { BusinessProfilesTable.userId eq userId }
+                .singleOrNull()
+                ?.let {
+                    BusinessProfileResponse(
+                        businessName = it[BusinessProfilesTable.businessName],
+                        businessEmail = it[BusinessProfilesTable.businessEmail],
+                        isVerified = it[BusinessProfilesTable.isVerified],
+                        businessLogo = it[BusinessProfilesTable.businessLogo]
+                    )
+                }
+
+            // Update last login
+            UsersTable.update({ UsersTable.id eq userId }) {
+                it[lastLoginAt] = LocalDateTime.now()
+            }
+
+            val token = JwtConfig.generateToken(userId.toString())
+
+            AuthResponse(
+                token = token,
+                user = UserResponse(
+                    id = userId.toString(),
+                    email = user[UsersTable.email],
+                    name = user[UsersTable.name],
+                    username = user[UsersTable.username],
+                    profilePicUrl = user[UsersTable.profilePicUrl],
+                    role = user[UsersTable.role].name,
+                    registrationStage = user[UsersTable.registrationStage].name,
+                    businessProfile = businessProfile
+                )
+            )
         }
     }
 
@@ -265,37 +348,19 @@ object AuthService {
         }
     }
 
-    /**
-     * Handle user registration or login based on OAuth provider.
-     */
-    fun oauthLoginOrRegister(email: String, name: String, provider: AuthProvider, userType: UserRole): String {
+    fun getUserByEmail(email: String): User? {
         return transaction {
-            val user = UsersTable.select { UsersTable.email eq email }.singleOrNull()
-
-            if (user == null) {
-                // Register a new user
-                val userId = UUID.randomUUID()
-                UsersTable.insert {
-                    it[id] = userId
-                    it[this.email] = email
-                    it[this.name] = name
-                    it[this.authProvider] = provider
-                    it[this.role] = userType
+            UsersTable.select { UsersTable.email eq email }
+                .singleOrNull()
+                ?.let { row ->
+                    User(
+                        id = row[UsersTable.id],
+                        email = row[UsersTable.email],
+                        name = row[UsersTable.name],
+                        authProvider = row[UsersTable.authProvider],
+                        registrationStage = row[UsersTable.registrationStage]
+                    )
                 }
-//                val address = AddressService.getAddressesByUser(userId)
-//                if (address.isEmpty()) {
-//                    AddressService.createDefaultAddress(userId)
-//                }
-                JwtConfig.generateToken(userId.toString())
-            } else {
-                // Generate token for existing user
-                val userId = user[UsersTable.id]
-//                val address = AddressService.getAddressesByUser(userId)
-//                if (address.isEmpty()) {
-//                    AddressService.createDefaultAddress(userId)
-//                }
-                JwtConfig.generateToken(userId.toString())
-            }
         }
     }
 
@@ -316,3 +381,11 @@ object AuthService {
     }
 
 }
+
+data class User(
+    val id: UUID,
+    val email: String,
+    val name: String?,
+    val authProvider: AuthProvider,
+    val registrationStage: RegistrationStage
+)
