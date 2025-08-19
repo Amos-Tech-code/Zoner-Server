@@ -1,5 +1,6 @@
 package com.amos_tech_code.routes
 
+import com.amos_tech_code.model.UploadFolder
 import com.amos_tech_code.services.ImageService
 import com.amos_tech_code.utils.respondError
 import io.ktor.http.*
@@ -15,16 +16,25 @@ fun Route.imageRoutes() {
         authenticate {
             post("/upload") {
                 try {
-                    // Get user role from JWT
-                    val principal = call.principal<JWTPrincipal>()
-                    val userRole = "owner"
 
-                    // Determine folder based on user role
-                    val folder = when (userRole.lowercase()) {
-                        "owner" -> "restaurants"
-                        "customer" -> "customers"
-                        "rider" -> "riders"
-                        else -> "misc"
+                    val principal = call.principal<JWTPrincipal>()
+                    val userId = principal?.getClaim("userId", String::class)
+                        ?: return@post call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "User ID not found in token")
+                        )
+
+                    val type = call.request.queryParameters["type"]?.lowercase()
+                        ?: return@post call.respondError(HttpStatusCode.BadRequest, "Missing type parameter")
+
+                    // Determine folder based on kind of media
+                    val folder = when (type) {
+                        "user" -> "users"
+                        "admin" -> "admins"
+                        "system" -> "system"
+                        "status" -> "status"
+                        "post" -> "posts"
+                        else -> "others"
                     }
 
                     // Handle multipart data

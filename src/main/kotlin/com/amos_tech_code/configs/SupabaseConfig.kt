@@ -10,6 +10,6 @@ object SupabaseConfig {
     }
 
     val SUPABASE_URL = env["SUPABASE_URL"]
-    val SUPABASE_KEY = env["SUPABASE_KEY"]
-    val STORAGE_BUCKET = env["SUPABASE_STORAGE_BUCKET"]
+    val SUPABASE_KEY= env["SUPABASE_KEY"]
+    val STORAGE_BUCKET: String? = env["SUPABASE_STORAGE_BUCKET"]
 } 

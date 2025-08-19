@@ -29,13 +29,6 @@ data class VerifyEmailRequest(
 data class ResendOtpRequest(val userId: String)
 
 @Serializable
-data class CompleteProfileRequest(
-    val userId: String,
-    val username: String,
-    val profilePicUrl: String? = null  // Optional
-)
-
-@Serializable
 data class CheckUserName(
     val userId: String,
     val username: String,

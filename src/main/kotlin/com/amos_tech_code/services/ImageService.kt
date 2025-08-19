@@ -7,18 +7,28 @@ import io.ktor.client.engine.cio.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.http.content.*
+import java.awt.Image
 import java.util.*
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import javax.imageio.ImageIO
 import java.awt.image.BufferedImage
+import javax.imageio.IIOImage
+import javax.imageio.ImageWriteParam
 import kotlin.math.roundToInt
 
 object ImageService {
     private val client = HttpClient(CIO)
     private val STORAGE_URL = "${SupabaseConfig.SUPABASE_URL}/storage/v1/object"
+
+    // Defaults for generic images
     private const val TARGET_SIZE_KB = 100
     private const val MAX_DIMENSION = 1024
+
+    // Profile picture specific settings (higher quality)
+    private const val PROFILE_TARGET_SIZE_KB = 500  // Increased from 100KB to 500KB
+    private const val PROFILE_MAX_DIMENSION = 2048  // Increased from 1024 to 2048px
+    private const val PROFILE_MIN_QUALITY = 0.8f    // Don't go below 80% quality
 
     suspend fun uploadImage(multipart: MultiPartData, folder: String): String {
         try {
@@ -48,7 +58,7 @@ object ImageService {
             }
 
             if (response.status.isSuccess()) {
-                return "$STORAGE_URL/public/${SupabaseConfig.STORAGE_BUCKET}/$newFileName"
+                return "$STORAGE_URL/public/${STORAGE_BUCKET}/$newFileName"
             } else {
                 throw IllegalStateException("Failed to upload image: ${response.status}")
             }
@@ -56,6 +66,93 @@ object ImageService {
             throw IllegalStateException("Failed to upload image: ${e.message}")
         }
     }
+
+    suspend fun uploadProfileImage(multipart: MultiPartData): String {
+        try {
+            val imageData = multipart.readAllParts().first { it is PartData.FileItem }
+            val originalBytes = (imageData as PartData.FileItem).streamProvider().readBytes()
+
+            // Compress with profile-specific settings
+            val compressedBytes = compressProfileImage(originalBytes)
+
+            // Generate filename
+            val originalFileName = imageData.originalFileName ?: "profile.jpg"
+            val fileExtension = originalFileName.substringAfterLast(".", "jpg")
+            val timestamp = System.currentTimeMillis()
+            val randomUUID = UUID.randomUUID().toString().take(8)
+            val newFileName = "profile-pics/profile_${timestamp}_${randomUUID}.$fileExtension"
+
+            // Upload to Supabase
+            val response = client.put("$STORAGE_URL/${STORAGE_BUCKET}/$newFileName") {
+                headers {
+                    append("apikey", SupabaseConfig.SUPABASE_KEY)
+                    append("Authorization", "Bearer ${SupabaseConfig.SUPABASE_KEY}")
+                    append("Content-Type", "image/jpeg")
+                }
+                setBody(compressedBytes)
+            }
+
+            if (response.status.isSuccess()) {
+                return "$STORAGE_URL/public/${STORAGE_BUCKET}/$newFileName"
+            } else {
+                throw IllegalStateException("Failed to upload profile image: ${response.status}")
+            }
+        } catch (e: Exception) {
+            throw IllegalStateException("Failed to upload profile image: ${e.message}")
+        }
+    }
+
+    private fun compressProfileImage(imageBytes: ByteArray): ByteArray {
+        val inputStream = ByteArrayInputStream(imageBytes)
+        val originalImage = ImageIO.read(inputStream)
+
+        // Scale only if significantly larger than our max dimension
+        val scaledImage = if (originalImage.width > PROFILE_MAX_DIMENSION ||
+            originalImage.height > PROFILE_MAX_DIMENSION) {
+            val scale = PROFILE_MAX_DIMENSION.toFloat() / maxOf(originalImage.width, originalImage.height)
+            val newWidth = (originalImage.width * scale).roundToInt()
+            val newHeight = (originalImage.height * scale).roundToInt()
+
+            BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB).apply {
+                createGraphics().run {
+                    drawImage(originalImage.getScaledInstance(newWidth, newHeight, Image.SCALE_SMOOTH), 0, 0, null)
+                    dispose()
+                }
+            }
+        } else {
+            originalImage
+        }
+
+        // Use progressive compression with higher minimum quality
+        val outputStream = ByteArrayOutputStream()
+        val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
+
+        try {
+            val writeParam = writer.defaultWriteParam.apply {
+                compressionMode = ImageWriteParam.MODE_EXPLICIT
+                compressionQuality = 0.95f  // Start with high quality
+            }
+
+            val ios = ImageIO.createImageOutputStream(outputStream)
+            writer.output = ios
+            writer.write(null, IIOImage(scaledImage, null, null), writeParam)
+
+            // Only reduce quality if absolutely necessary
+            var result = outputStream.toByteArray()
+            if (result.size > PROFILE_TARGET_SIZE_KB * 1024) {
+                writeParam.compressionQuality = PROFILE_MIN_QUALITY
+                outputStream.reset()
+                writer.write(null, IIOImage(scaledImage, null, null), writeParam)
+                result = outputStream.toByteArray()
+            }
+
+            return result
+        } finally {
+            writer.dispose()
+            outputStream.close()
+        }
+    }
+
 
     private fun compressImage(imageBytes: ByteArray): ByteArray {
         val inputStream = ByteArrayInputStream(imageBytes)

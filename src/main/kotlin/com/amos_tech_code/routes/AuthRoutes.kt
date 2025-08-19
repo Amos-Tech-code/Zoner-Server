@@ -3,6 +3,7 @@ package com.amos_tech_code.routes
 import com.amos_tech_code.configs.JwtConfig
 import com.amos_tech_code.model.AuthProvider
 import com.amos_tech_code.model.RegistrationStage
+import com.amos_tech_code.model.UploadFolder
 import com.amos_tech_code.model.UserRole
 import com.amos_tech_code.model.request.*
 import com.amos_tech_code.model.response.AlreadyVerifiedException
@@ -13,13 +14,17 @@ import com.amos_tech_code.model.response.GenericResponse
 import com.amos_tech_code.model.response.UsernameConflictException
 import com.amos_tech_code.services.AuthService
 import com.amos_tech_code.services.EmailService
+import com.amos_tech_code.services.ImageService
 import com.amos_tech_code.services.UsernameService
 import com.amos_tech_code.services.VerificationService
 import com.amos_tech_code.utils.extractClean
 import com.amos_tech_code.utils.normalizeAndValidateUsername
 import com.amos_tech_code.utils.respondError
+import com.amos_tech_code.utils.toMultiPartData
 import com.amos_tech_code.utils.toUUIDOrNull
 import io.ktor.http.*
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
@@ -32,8 +37,6 @@ import kotlinx.coroutines.runBlocking
 import org.koin.java.KoinJavaComponent.getKoin
 import java.util.*
 
-
-data class TokenRequest(val token: String)
 
 fun Route.authRoutes() {
     route("/auth") {
@@ -419,15 +422,58 @@ fun Route.authRoutes() {
         }
 
         post("/complete-profile") {
-            try {
-                val request = call.receive<CompleteProfileRequest>()
-                // validate up-front: throws if bad
-                normalizeAndValidateUsername(request.username)
+            var uploadedImageUrl: String? = null
+            var profilePicFile: PartData.FileItem? = null
 
+            try {
+                // Receive multipart form data
+                val multipart = call.receiveMultipart()
+                var userId: String? = null
+                var username: String? = null
+
+                // First pass: collect all parts without disposing
+                multipart.forEachPart { part ->
+                    when (part) {
+                        is PartData.FormItem -> {
+                            when (part.name) {
+                                "userId" -> userId = part.value
+                                "username" -> username = part.value
+                            }
+                            part.dispose() // Safe to dispose form items immediately
+                        }
+                        is PartData.FileItem -> {
+                            if (part.name == "profilePic") {
+                                profilePicFile = part // Don't dispose yet!
+                            } else {
+                                part.dispose() // Dispose other file parts we don't need
+                            }
+                        }
+                        else -> part.dispose()
+                    }
+                }
+
+                // Validate required fields
+                if (userId == null || username == null) {
+                    throw BadRequestException("Missing required fields")
+                }
+
+                // Normalize and validate username format first
+                val normalizedUsername = normalizeAndValidateUsername(username)
+
+                // Process image if provided
+                uploadedImageUrl = profilePicFile?.let { fileItem ->
+                    try {
+                        ImageService.uploadProfileImage(multipart = listOf(fileItem).toMultiPartData())
+                    } finally {
+                        fileItem.dispose() // Dispose only after we're done with the file
+                    }
+                }
+
+                // Complete profile (includes final DB check)
                 val result = AuthService.completeUserProfile(
-                    userId = request.userId,
-                    username = request.username,
-                    profilePicUrl = request.profilePicUrl
+                    userId = userId,
+                    username = normalizedUsername,
+                    profilePicUrl = uploadedImageUrl
                 )
 
                 val token = JwtConfig.generateToken(userId = result.user.id)
@@ -441,6 +487,15 @@ fun Route.authRoutes() {
                     )
                 )
             } catch (e: UsernameConflictException) {
+                // Clean up uploaded image if username conflict occurs
+                uploadedImageUrl?.let { url ->
+                    try {
+                        ImageService.deleteImage(url)
+                    } catch (e: Exception) {
+                        // Log cleanup failure but don't fail the request
+                        println("Failed to cleanup image after username conflict: $e")
+                    }
+                }
                 val suggestions = UsernameService.generateSuggestions(
                     requestedUsername = extractClean(e.requestedUsername),
                     userId = e.userId.toUUIDOrNull()
@@ -457,12 +512,27 @@ fun Route.authRoutes() {
                     )
                 )
             } catch (e: BadRequestException) {
+                uploadedImageUrl?.let { url ->
+                    try {
+                        ImageService.deleteImage(url)
+                    } catch (e: Exception) {
+                        println("Failed to cleanup image after bad request: $e")
+                    }
+                }
                 call.respond(HttpStatusCode.BadRequest, GenericResponse<Unit>(false, e.message ?: "Invalid request"))
             } catch (e: Exception) {
+                uploadedImageUrl?.let { url ->
+                    try {
+                        ImageService.deleteImage(url)
+                    } catch (e: Exception) {
+                        println("Failed to cleanup image after error: $e")
+                    }
+                }
                 call.respond(
                     HttpStatusCode.InternalServerError,
                     GenericResponse<Unit>(false, "Profile completion failed")
                 )
+                println("Profile completion failed ${e.message}")
             }
         }
 

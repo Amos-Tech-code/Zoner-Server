@@ -20,3 +20,26 @@ enum class AuthProvider { GOOGLE, FACEBOOK, PHONE, EMAIL }
 enum class VerificationStatus { PENDING, APPROVED, REJECTED }
 
 enum class MediaType { IMAGE, VIDEO }
+
+enum class UploadFolder(val folderName: String) {
+    USER("users"),
+    ADMIN("admins"),
+    SYSTEM("system"),
+    STATUS("status"),
+    POST("posts"),
+    OTHERS("others");
+
+    companion object {
+        fun fromType(type: String?): UploadFolder {
+            return when (type?.lowercase()) {
+                "user" -> USER
+                "admin" -> ADMIN
+                "system" -> SYSTEM
+                "status" -> STATUS
+                "post" -> POST
+                else -> OTHERS
+            }
+        }
+    }
+}
+
