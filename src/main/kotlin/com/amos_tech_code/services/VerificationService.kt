@@ -32,6 +32,7 @@ object VerificationService {
             EmailVerificationTokensTable.insert {
                 it[EmailVerificationTokensTable.userId] = userId
                 it[EmailVerificationTokensTable.code] = codeHash
+                it[EmailVerificationTokensTable.createdAt] = LocalDateTime.now()
                 it[EmailVerificationTokensTable.expiresAt] = LocalDateTime.now().plusMinutes(10)
                 it[EmailVerificationTokensTable.isUsed] = false
             }

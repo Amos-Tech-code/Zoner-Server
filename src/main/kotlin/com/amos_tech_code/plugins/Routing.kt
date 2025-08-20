@@ -1,6 +1,7 @@
 package com.amos_tech_code.plugins
 
 import com.amos_tech_code.routes.authRoutes
+import com.amos_tech_code.routes.businessProfileRoutes
 import com.amos_tech_code.routes.imageRoutes
 import com.amos_tech_code.routes.notificationRoutes
 import com.amos_tech_code.routes.resetPasswordRoutes
@@ -17,9 +18,10 @@ fun Application.configureRouting() {
 
         authRoutes()
         resetPasswordRoutes()
-        imageRoutes()
         // Authenticate
         authenticate {
+            imageRoutes()
+            businessProfileRoutes()
             notificationRoutes()
         }
     }

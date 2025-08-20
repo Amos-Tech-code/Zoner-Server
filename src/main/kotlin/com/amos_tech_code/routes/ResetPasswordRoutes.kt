@@ -1,10 +1,10 @@
 package com.amos_tech_code.routes
 
+import com.amos_tech_code.model.ResetPasswordResult
 import com.amos_tech_code.model.request.ForgotPasswordRequest
 import com.amos_tech_code.model.request.ResetPasswordRequest
 import com.amos_tech_code.model.response.GenericResponse
 import com.amos_tech_code.services.PasswordResetService
-import com.amos_tech_code.services.ResetPasswordResult
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*

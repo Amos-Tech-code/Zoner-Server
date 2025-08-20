@@ -2,6 +2,7 @@ package com.amos_tech_code.services
 
 import com.amos_tech_code.database.PasswordResetTokensTable
 import com.amos_tech_code.database.UsersTable
+import com.amos_tech_code.model.ResetPasswordResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -193,11 +194,4 @@ object PasswordResetService {
             ResetPasswordResult.Success
         }
     }
-}
-
-sealed class ResetPasswordResult {
-    object Success : ResetPasswordResult()
-    object UserNotFound : ResetPasswordResult()
-    object InvalidRequest : ResetPasswordResult()
-    object InvalidOtp : ResetPasswordResult()
 }

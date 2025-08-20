@@ -2,6 +2,10 @@ package com.amos_tech_code.utils
 
 object EmailTemplateUtil {
 
+    const val ZONER_LOGO_URL = "https://issukbsivkkqzsghassb.supabase.co/storage/v1/object/public/zoner_bucket/system/logov1.png"
+    const val PRIVACY_POLICY_URL = "https://zoner-server.onrender.com/privacy"
+    const val TERMS_OF_SERVICE_URL = "https://zoner-server.onrender.com/terms"
+
     fun generateVerificationEmail(name: String, code: String): String {
         return """
         <!DOCTYPE html>
@@ -93,7 +97,7 @@ object EmailTemplateUtil {
                 <div class="email-container">
                     <div class="header">
                         <!-- Replace with your logo URL -->
-                        <img src="https://yourdomain.com/logo.png" alt="Zoner Logo" class="logo">
+                        <img src=${ZONER_LOGO_URL} alt="Zoner Logo" class="logo">
                     </div>
                     
                     <div class="content">
@@ -115,8 +119,8 @@ object EmailTemplateUtil {
                     <div class="footer">
                         <p>&copy; 2025 Zoner. All rights reserved.</p>
                         <p>
-                            <a href="https://yourdomain.com/privacy" style="color: #7f8c8d; text-decoration: none;">Privacy Policy</a> | 
-                            <a href="https://yourdomain.com/terms" style="color: #7f8c8d; text-decoration: none;">Terms of Service</a>
+                            <a href=${PRIVACY_POLICY_URL} style="color: #7f8c8d; text-decoration: none;">Privacy Policy</a> | 
+                            <a href=${TERMS_OF_SERVICE_URL} style="color: #7f8c8d; text-decoration: none;">Terms of Service</a>
                         </p>
                     </div>
                 </div>
@@ -203,7 +207,7 @@ object EmailTemplateUtil {
         <body>
             <div class="email-container">
                 <div class="header">
-                    <img src="https://yourdomain.com/logo.png" alt="Zoner Logo" class="logo">
+                    <img src=${ZONER_LOGO_URL} alt="Zoner Logo" class="logo">
                 </div>
                 <div class="content">
                     <h1>Password Reset Request</h1>
@@ -224,8 +228,8 @@ object EmailTemplateUtil {
                 <div class="footer">
                     <p>&copy; 2025 Zoner. All rights reserved.</p>
                     <p>
-                        <a href="https://yourdomain.com/privacy" style="color: #7f8c8d; text-decoration: none;">Privacy Policy</a> | 
-                        <a href="https://yourdomain.com/terms" style="color: #7f8c8d; text-decoration: none;">Terms of Service</a>
+                        <a href=${PRIVACY_POLICY_URL} style="color: #7f8c8d; text-decoration: none;">Privacy Policy</a> | 
+                        <a href=${TERMS_OF_SERVICE_URL} style="color: #7f8c8d; text-decoration: none;">Terms of Service</a>
                     </p>
                 </div>
             </div>

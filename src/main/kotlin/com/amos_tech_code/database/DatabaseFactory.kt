@@ -37,6 +37,7 @@ object DatabaseFactory {
                     EmailVerificationTokensTable,
                     PasswordResetTokensTable,
                     BusinessProfilesTable,
+                    BusinessFollowersTable,
                     NotificationsTable,
                 )
 
@@ -51,6 +52,8 @@ object DatabaseFactory {
 
 fun Application.migrateDatabase() {
     // This function can be used for future database migrations
+   // migrateBusinessProfilesTable()
+
 }
 
 fun Application.seedDatabase() {

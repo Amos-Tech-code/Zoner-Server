@@ -22,6 +22,7 @@ enum class VerificationStatus { PENDING, APPROVED, REJECTED }
 enum class MediaType { IMAGE, VIDEO }
 
 enum class UploadFolder(val folderName: String) {
+    PROFILE_PIC("profile-pics"),
     USER("users"),
     ADMIN("admins"),
     SYSTEM("system"),
@@ -32,6 +33,7 @@ enum class UploadFolder(val folderName: String) {
     companion object {
         fun fromType(type: String?): UploadFolder {
             return when (type?.lowercase()) {
+                "profile-pics" -> PROFILE_PIC
                 "user" -> USER
                 "admin" -> ADMIN
                 "system" -> SYSTEM

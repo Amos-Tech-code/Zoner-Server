@@ -45,6 +45,33 @@ object UsersTable : Table("users") {
     override val primaryKey = PrimaryKey(id)
 }
 
+
+object BusinessProfilesTable : Table("business_profiles") {
+    val id = uuid("id").autoGenerate()
+    val userId = (uuid("user_id") references UsersTable.id).uniqueIndex()
+    val businessName = varchar("business_name", 255)
+    val businessEmail = varchar("business_email", 255).nullable()
+    val businessPhone = varchar("business_phone", 50).nullable()
+    val businessAddress = text("business_address").nullable()
+    val category = varchar("category", 100).nullable()
+    val country = varchar("country", 100).nullable()
+    val businessDescription = text("business_description").nullable()
+    val businessLogo = text("business_logo").nullable()
+    val websiteUrl = text("website_url").nullable()
+    val followerCount = integer("follower_count").default(0)
+    val isVerified = bool("is_verified").default(false)
+    val verificationRequestedAt = datetime("verification_requested_at").nullable()
+    val verifiedAt = datetime("verified_at").nullable()
+    val taxId = varchar("tax_id", 100).nullable()
+    val isTermsAccepted = bool("is_terms_accepted").default(false)
+    // Timestamps
+    val createdAt = datetime("created_at").clientDefault { now() }
+    val updatedAt = datetime("updated_at").clientDefault { now() }
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+
 object EmailVerificationTokensTable : Table("email_verification_tokens") {
     val id = uuid("id").autoGenerate()
     val userId = (uuid("user_id") references UsersTable.id).uniqueIndex()
@@ -66,26 +93,6 @@ object PasswordResetTokensTable : Table("password_reset_tokens") {
 
     override val primaryKey = PrimaryKey(id)
 
-}
-
-object BusinessProfilesTable : Table("business_profiles") {
-    val id = uuid("id").autoGenerate()
-    val userId = (uuid("user_id") references UsersTable.id).uniqueIndex()
-    val businessName = varchar("business_name", 255)
-    val businessEmail = varchar("business_email", 255).nullable()
-    val businessPhone = varchar("business_phone", 50).nullable()
-    val businessAddress = text("business_address").nullable()
-    val businessDescription = text("business_description").nullable()
-    val businessLogo = text("business_logo").nullable()
-    val websiteUrl = text("website_url").nullable()
-    val followerCount = integer("follower_count").default(0)
-    val isVerified = bool("is_verified").default(false)
-    val verificationRequestedAt = datetime("verification_requested_at").nullable()
-    val verifiedAt = datetime("verified_at").nullable()
-    val taxId = varchar("tax_id", 100).nullable() // for verification
-    val updatedAt = datetime("updated_at").clientDefault { now() }
-
-    override val primaryKey = PrimaryKey(id)
 }
 
 object BusinessFollowersTable : Table("business_followers") {

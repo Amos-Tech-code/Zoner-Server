@@ -6,6 +6,7 @@ import com.amos_tech_code.database.BusinessProfilesTable
 import com.amos_tech_code.database.UsersTable
 import com.amos_tech_code.model.AuthProvider
 import com.amos_tech_code.model.RegistrationStage
+import com.amos_tech_code.model.User
 import com.amos_tech_code.model.UserRole
 import com.amos_tech_code.model.request.CompleteProfileResult
 import com.amos_tech_code.model.request.RegisterResult
@@ -186,12 +187,17 @@ object AuthService {
                     )
                 }
 
-            // 6. Generate token
+            // 6. Update user last login
+            UsersTable.update({ UsersTable.email eq email }) {
+                it[UsersTable.lastLoginAt] = LocalDateTime.now()
+            }
+
+            // 7. Generate token
             val token = JwtConfig.generateToken(
                 userId = user[UsersTable.id].toString(),
             )
 
-            // 7. Prepare user response
+            // 8. Prepare user response
             val userResponse = UserResponse(
                 id = user[UsersTable.id].toString(),
                 email = user[UsersTable.email],
@@ -231,8 +237,6 @@ object AuthService {
             null
         }
     }
-
-    // In AuthService.kt
 
     fun registerOAuthUser(
         name: String,
@@ -381,11 +385,3 @@ object AuthService {
     }
 
 }
-
-data class User(
-    val id: UUID,
-    val email: String,
-    val name: String?,
-    val authProvider: AuthProvider,
-    val registrationStage: RegistrationStage
-)
