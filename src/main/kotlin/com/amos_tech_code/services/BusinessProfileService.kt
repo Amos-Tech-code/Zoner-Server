@@ -4,6 +4,7 @@ import com.amos_tech_code.configs.JwtConfig
 import com.amos_tech_code.database.BusinessProfilesTable
 import com.amos_tech_code.database.UsersTable
 import com.amos_tech_code.model.RegistrationStage
+import com.amos_tech_code.model.UserRole
 import com.amos_tech_code.model.request.CreateBusinessProfile
 import com.amos_tech_code.model.response.AuthResponse
 import com.amos_tech_code.model.response.BusinessProfileResponse
@@ -48,6 +49,7 @@ object BusinessProfileService {
 
             // Update user registration stage
             UsersTable.update({ UsersTable.id eq userId }) {
+                it[UsersTable.role] = UserRole.BUSINESS
                 it[UsersTable.registrationStage] = RegistrationStage.BUSINESS_ADDED
                 it[UsersTable.updatedAt] = LocalDateTime.now()
             }
