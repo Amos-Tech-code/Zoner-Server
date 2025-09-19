@@ -94,35 +94,38 @@ The backend follows a clean, modular, and scalable architecture:
 
 
 ## 🏗️ **Architecture Overview**
-   
-   
-                  ┌──────────────────────────┐
-                  │        Client Apps        │
-                  │  - Zoner Mobile (Android) │
-                  │  - Web Client (Future)    │
-                  └─────────────┬────────────┘
-                                │ REST / WS
-                                ▼
-                ┌─────────────────────────────────┐
-                │         Ktor Backend API         │
-                │─────────────────────────────────│
-                │  • Authentication (JWT, OAuth)   │
-                │  • User Profiles & Follows       │
-                │  • Posts & Stories               │
-                │  • Messaging (WebSockets)        │
-                │  • Notifications                 │
-                │  • Search & Discovery            │
-                │  • Privacy & Security            │
-                └─────────────┬───────────────────┘
-                                │
-           ┌────────────────────┴─────────────────────┐
-           │                                            │
-┌─────────────────────┐                    ┌─────────────────────┐
-│   PostgreSQL DB      │                    │   File Storage (S3) │
-│  • Users              │                    │  • Images           │
-│  • Posts              │                    │  • Videos           │
-│  • Messages           │                    │  • Stories          │
-│  • Follows            │                    └─────────────────────┘
-│  • Likes/Comments     │
-└───────────────────────┘
 
+```mermaid
+flowchart TD
+    subgraph Client["Client Apps"]
+        A1["📱 Zoner Mobile (Android)"]
+        A2["🌐 Web Client (Future)"]
+    end
+
+    subgraph Backend["Ktor Backend API"]
+        B1["🔐 Authentication (JWT, OAuth)"]
+        B2["👤 User Profiles & Follows"]
+        B3["📝 Posts & Stories"]
+        B4["💬 Messaging (WebSockets)"]
+        B5["🔔 Notifications"]
+        B6["🔍 Search & Discovery"]
+        B7["🛡️ Privacy & Security"]
+    end
+
+    subgraph Database["PostgreSQL Database"]
+        D1["Users"]
+        D2["Posts"]
+        D3["Messages"]
+        D4["Follows"]
+        D5["Likes & Comments"]
+    end
+
+    subgraph Storage["File Storage (S3 Compatible)"]
+        S1["Images"]
+        S2["Videos"]
+        S3["Stories"]
+    end
+
+    Client -->|REST / WebSockets| Backend
+    Backend --> Database
+    Backend --> Storage
