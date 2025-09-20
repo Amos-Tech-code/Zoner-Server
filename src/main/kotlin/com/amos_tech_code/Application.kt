@@ -1,21 +1,15 @@
 package com.amos_tech_code
 
-import com.amos_tech_code.configs.FacebookAuthConfig
-import com.amos_tech_code.configs.GoogleAuthConfig
-import com.amos_tech_code.configs.JwtConfig
-import com.amos_tech_code.database.DatabaseFactory
-import com.amos_tech_code.database.migrateDatabase
-import com.amos_tech_code.database.seedDatabase
-import com.amos_tech_code.plugins.configureAuthentication
-import com.amos_tech_code.plugins.configureKoin
-import com.amos_tech_code.plugins.configureRouting
-import com.amos_tech_code.services.FirebaseService
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
+import com.amos_tech_code.data.database.DatabaseFactory
+import com.amos_tech_code.data.database.migrateDatabase
+import com.amos_tech_code.data.database.seedDatabase
+import com.amos_tech_code.application.plugins.configureAuthentication
+import com.amos_tech_code.application.plugins.configureKoin
+import com.amos_tech_code.application.plugins.configureMediaServices
+import com.amos_tech_code.application.plugins.configureRouting
+import com.amos_tech_code.domain.services.FirebaseService
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
-import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
 import io.ktor.server.plugins.callloging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.websocket.*
@@ -28,6 +22,7 @@ fun main(args: Array<String>) {
 
 fun Application.module() {
     configureKoin()
+    configureMediaServices()
     configureAuthentication() // Call authentication config
     install(ContentNegotiation) {
         json(Json {

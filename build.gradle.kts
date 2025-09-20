@@ -84,4 +84,11 @@ dependencies {
     implementation("io.insert-koin:koin-ktor:3.4.1")
     implementation("io.insert-koin:koin-logger-slf4j:3.4.1")
 
+    // Low-level video/audio processing
+    implementation("org.bytedeco:ffmpeg-platform:6.0-1.5.9")
+    implementation("org.bytedeco:javacv-platform:1.5.9")
+    // File type detection + metadata extraction
+    implementation("org.apache.tika:tika-core:2.9.0")
+    // BlurHash
+
 }

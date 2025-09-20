@@ -1,8 +1,14 @@
 package com.amos_tech_code.di
 
-import com.amos_tech_code.configs.SMTPConfig
-import com.amos_tech_code.services.EmailService
-import com.amos_tech_code.services.EmailServiceImpl
+import com.amos_tech_code.application.configs.SMTPConfig
+import com.amos_tech_code.data.repository.StatusRepositoryImpl
+import com.amos_tech_code.data.repository.UserRepositoryImpl
+import com.amos_tech_code.domain.repository.StatusRepository
+import com.amos_tech_code.domain.repository.UserRepository
+import com.amos_tech_code.domain.services.EmailService
+import com.amos_tech_code.domain.services.EmailServiceImpl
+import com.amos_tech_code.domain.services.ImageService
+import com.amos_tech_code.domain.services.VideoService
 import org.koin.dsl.module
 import org.simplejavamail.api.mailer.Mailer
 import org.simplejavamail.api.mailer.config.TransportStrategy
@@ -24,5 +30,9 @@ val mainModule = module {
             mailer = get<Mailer>()
         )
     }
+
+    single<StatusRepository> { StatusRepositoryImpl() }
+
+    single<UserRepository> { UserRepositoryImpl() }
 
 }
