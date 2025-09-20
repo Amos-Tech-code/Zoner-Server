@@ -1,33 +1,31 @@
 package com.amos_tech_code.domain.services
 
 import com.amos_tech_code.application.configs.SupabaseConfig
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.request.put
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.content.MultiPartData
-import io.ktor.http.content.PartData
-import io.ktor.http.content.readAllParts
-import io.ktor.http.content.streamProvider
-import io.ktor.http.headers
-import io.ktor.http.isSuccess
+import com.amos_tech_code.application.configs.SupabaseConfig.STORAGE_BUCKET
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.http.content.*
 import org.apache.tika.Tika
 import org.bytedeco.ffmpeg.global.avcodec
 import org.bytedeco.ffmpeg.global.avutil
 import org.bytedeco.javacv.FFmpegFrameGrabber
 import org.bytedeco.javacv.FFmpegFrameRecorder
 import org.bytedeco.javacv.Java2DFrameConverter
+import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.util.UUID
+import java.util.*
 import javax.imageio.ImageIO
 
 object VideoService {
     private val client = HttpClient(CIO)
     private val STORAGE_URL = "${SupabaseConfig.SUPABASE_URL}/storage/v1/object"
-    private const val STORAGE_BUCKET = "videos"
     private val tika = Tika()
+
+    private val logger = LoggerFactory.getLogger(VideoService::class.java)
 
     // Video compression settings
     private const val TARGET_MAX_SIZE_MB = 10
@@ -52,23 +50,37 @@ object VideoService {
                 Files.copy(input, tempFile, StandardCopyOption.REPLACE_EXISTING)
             }
 
+            //logger.info("Processing video file: $originalFileName, size: ${Files.size(tempFile)} bytes")
+
             // Validate & compress
-            val metadata = validateAndGetMetadata(tempFile, originalFileName)
+            val metadata = validateAndGetMetadata(tempFile)
+            //logger.debug("Video metadata: $metadata")
+
             val compressedFile = compressVideo(tempFile, metadata)
+            //logger.debug("Video compressed successfully, new size: ${Files.size(compressedFile)} bytes")
 
             // Generate thumbnail (as file + bytes)
             generateThumbnail(tempFile, tempThumbnail)
             val thumbnailBytes = Files.readAllBytes(tempThumbnail)
 
-            // Upload video only (statuses don’t need thumbnail upload)
+            // Upload video only (statuses don't need thumbnail upload)
             val videoUrl = uploadToStorage(
                 compressedFile,
                 folder,
-                originalFileName,
-                "video"
+                getOutputFilename(originalFileName, "video"),
+                "video/mp4" // Always output as MP4 after compression
             )
 
+            //logger.info("Video uploaded successfully: $videoUrl")
+
             return Pair(videoUrl, thumbnailBytes)
+
+        } catch (e: VideoValidationException) {
+            logger.error("Video validation failed: ${e.message}")
+            throw e
+        } catch (e: Exception) {
+            logger.error("Unexpected error during video processing", e)
+            throw VideoUploadException("Failed to process video.")
         } finally {
             Files.deleteIfExists(tempFile)
             Files.deleteIfExists(tempThumbnail)
@@ -90,39 +102,60 @@ object VideoService {
                 Files.copy(input, tempFile, StandardCopyOption.REPLACE_EXISTING)
             }
 
+            //logger.info("Processing video file: $originalFileName, size: ${Files.size(tempFile)} bytes")
+
             // Validate & compress
-            val metadata = validateAndGetMetadata(tempFile, originalFileName)
+            val metadata = validateAndGetMetadata(tempFile)
+            //logger.debug("Video metadata: $metadata")
+
             val compressedFile = compressVideo(tempFile, metadata)
+            //logger.debug("Video compressed successfully, new size: ${Files.size(compressedFile)} bytes")
 
             // Generate thumbnail (file only)
             generateThumbnail(tempFile, tempThumbnail)
 
             // Upload both
-            val videoUrl = uploadToStorage(compressedFile, folder, originalFileName, "video")
+            val videoUrl = uploadToStorage(
+                compressedFile,
+                folder,
+                getOutputFilename(originalFileName, "video"),
+                "video/mp4"
+            )
+
             val thumbnailUrl = uploadToStorage(
                 tempThumbnail,
                 "$folder/thumbnails",
-                "thumbnail_${originalFileName.substringBeforeLast(".")}.jpg",
-                "image"
+                getOutputFilename(originalFileName, "thumbnail"),
+                "image/jpeg"
             )
 
             return Pair(videoUrl, thumbnailUrl)
+        } catch (e: VideoValidationException) {
+            logger.error("Video validation failed.")
+            throw e
+        } catch (e: Exception) {
+            logger.error("Unexpected error during video processing", e)
+            throw VideoUploadException("Failed to process video.")
         } finally {
             Files.deleteIfExists(tempFile)
             Files.deleteIfExists(tempThumbnail)
         }
     }
 
-    private fun validateAndGetMetadata(file: java.nio.file.Path, fileName: String): VideoMetadata {
+    private fun validateAndGetMetadata(file: java.nio.file.Path): VideoMetadata {
         FFmpegFrameGrabber(file.toFile()).use { grabber ->
             grabber.start()
 
             val duration = grabber.lengthInTime / 1_000_000 // Convert to seconds
             val fileSize = Files.size(file).toInt()
-            val bitrate = grabber.getVideoBitrate()
-            val frameRate = grabber.getFrameRate()
+            val bitrate = grabber.videoBitrate
+            val frameRate = grabber.frameRate
             val width = grabber.imageWidth
             val height = grabber.imageHeight
+            val hasAudio = grabber.audioChannels > 0
+
+            // Use Tika to detect the actual format from content
+            val format = detectVideoFormat(file)
 
             if (duration > MAX_DURATION_SECONDS) {
                 throw VideoValidationException("Video duration ${duration}s exceeds maximum allowed duration of ${MAX_DURATION_SECONDS}s")
@@ -133,8 +166,6 @@ object VideoService {
                 throw VideoValidationException("Video size ${"%.2f".format(sizeMB)}MB exceeds maximum allowed size of ${TARGET_MAX_SIZE_MB}MB")
             }
 
-            val format = getVideoFormat(fileName)
-
             return VideoMetadata(
                 duration = duration.toInt(),
                 format = format,
@@ -143,8 +174,31 @@ object VideoService {
                 bitrate = bitrate,
                 frameRate = frameRate,
                 width = width,
-                height = height
+                height = height,
+                hasAudio = hasAudio
             )
+        }
+    }
+
+    private fun detectVideoFormat(file: java.nio.file.Path): VideoFormat {
+        return try {
+            val mimeType = tika.detect(file.toFile())
+            logger.debug("Tika detected MIME type: $mimeType")
+
+            when {
+                mimeType.contains("mp4") -> VideoFormat.MP4
+                mimeType.contains("webm") -> VideoFormat.WEBM
+                mimeType.contains("quicktime") || mimeType.contains("mov") -> VideoFormat.MOV
+                mimeType.contains("avi") -> VideoFormat.AVI
+                mimeType.contains("matroska") || mimeType.contains("mkv") -> VideoFormat.MKV
+                else -> {
+                    logger.warn("Unsupported MIME type: $mimeType, defaulting to MP4")
+                    VideoFormat.MP4
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to detect video format with Tika: ${e.message}, defaulting to MP4")
+            VideoFormat.MP4
         }
     }
 
@@ -154,21 +208,34 @@ object VideoService {
         FFmpegFrameGrabber(inputFile.toFile()).use { grabber ->
             grabber.start()
 
+            val hasAudio = metadata.hasAudio
+
             FFmpegFrameRecorder(outputFile.toFile(), grabber.imageWidth, grabber.imageHeight).use { recorder ->
                 recorder.format = "mp4"
                 recorder.videoCodec = avcodec.AV_CODEC_ID_H264
                 recorder.videoBitrate = TARGET_BITRATE_KBPS * 1000
                 recorder.frameRate = grabber.frameRate.coerceAtMost(TARGET_FRAMERATE.toDouble())
                 recorder.pixelFormat = avutil.AV_PIX_FMT_YUV420P
-                recorder.videoQuality = 0.0 // Auto quality
                 recorder.setOption("preset", "fast")
                 recorder.setOption("crf", "23")
+
+                // Only set up audio if the source has audio
+                if (hasAudio) {
+                    recorder.audioCodec = avcodec.AV_CODEC_ID_AAC
+                    recorder.audioChannels = grabber.audioChannels
+                    recorder.audioBitrate = 128000
+                    recorder.sampleRate = grabber.sampleRate
+                }
 
                 recorder.start()
 
                 var frame = grabber.grab()
                 while (frame != null) {
-                    recorder.record(frame)
+                    if (frame.image != null) {
+                        recorder.record(frame)
+                    } else if (hasAudio && frame.samples != null) {
+                        recorder.record(frame)
+                    }
                     frame = grabber.grab()
                 }
 
@@ -180,7 +247,7 @@ object VideoService {
         return outputFile
     }
 
-    fun generateThumbnail(videoFile: java.nio.file.Path, outputThumbnail: java.nio.file.Path) {
+    private fun generateThumbnail(videoFile: java.nio.file.Path, outputThumbnail: java.nio.file.Path) {
         FFmpegFrameGrabber(videoFile.toFile()).use { grabber ->
             grabber.start()
 
@@ -204,16 +271,12 @@ object VideoService {
     private suspend fun uploadToStorage(
         file: java.nio.file.Path,
         folder: String,
-        originalFileName: String,
-        fileType: String
+        fileName: String,
+        contentType: String
     ): String {
-        val fileExtension = originalFileName.substringAfterLast(".", "mp4")
-        val timestamp = System.currentTimeMillis()
-        val randomUUID = UUID.randomUUID().toString().take(8)
-        val newFileName = "${folder}/${fileType}_${timestamp}_${randomUUID}.$fileExtension"
+        val newFileName = "${folder}/$fileName"
 
         val fileBytes = Files.readAllBytes(file)
-        val contentType = tika.detect(file.toFile())
 
         val response = client.put("$STORAGE_URL/${STORAGE_BUCKET}/$newFileName") {
             headers {
@@ -226,33 +289,19 @@ object VideoService {
 
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
-            throw VideoUploadException("Failed to upload $fileType: ${response.status} - $errorBody")
+            throw VideoUploadException("Failed to upload file: ${response.status} - $errorBody")
         }
 
         return "$STORAGE_URL/public/${STORAGE_BUCKET}/$newFileName"
     }
 
-    private fun getVideoFormat(fileName: String): VideoFormat {
-        val extension = fileName.substringAfterLast(".", "").lowercase()
-        return when (extension) {
-            "mp4" -> VideoFormat.MP4
-            "webm" -> VideoFormat.WEBM
-            "mov" -> VideoFormat.MOV
-            "avi" -> VideoFormat.AVI
-            "mkv" -> VideoFormat.MKV
-            else -> throw VideoValidationException("Unsupported video format: $extension")
-        }
+    private fun getOutputFilename(originalFileName: String, prefix: String): String {
+        val timestamp = System.currentTimeMillis()
+        val randomUUID = UUID.randomUUID().toString().take(8)
+        val baseName = originalFileName.substringBeforeLast(".").takeIf { it.isNotEmpty() } ?: "file"
+        return "${prefix}_${baseName}_${timestamp}_${randomUUID}.mp4"
     }
 
-    suspend fun extractVideoMetadata(videoBytes: ByteArray, fileName: String): VideoMetadata {
-        val tempFile = Files.createTempFile("video_meta_", ".tmp")
-        try {
-            Files.write(tempFile, videoBytes)
-            return validateAndGetMetadata(tempFile, fileName)
-        } finally {
-            Files.deleteIfExists(tempFile)
-        }
-    }
 }
 
 // Data classes
@@ -264,7 +313,8 @@ data class VideoMetadata(
     val bitrate: Int,
     val frameRate: Double,
     val width: Int,
-    val height: Int
+    val height: Int,
+    val hasAudio: Boolean
 )
 
 enum class VideoFormat { MP4, WEBM, MOV, AVI, MKV }

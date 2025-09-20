@@ -2,13 +2,8 @@ package com.amos_tech_code.presentation.controllers
 
 import com.amos_tech_code.domain.model.MediaType
 import com.amos_tech_code.domain.services.StatusService
-import com.amos_tech_code.presentation.dto.request.StatusReactionRequest
 import com.amos_tech_code.presentation.dto.response.GenericResponse
-import com.amos_tech_code.utils.getUserIdFromJWT
-import com.amos_tech_code.utils.respondBadRequest
-import com.amos_tech_code.utils.respondForbidden
-import com.amos_tech_code.utils.respondUnauthorized
-import com.amos_tech_code.utils.toMultiPartData
+import com.amos_tech_code.utils.*
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.application.*
@@ -114,7 +109,7 @@ fun Route.statusRoutes() {
 
         // Get statuses from specific users
         get("/users/{userId}") {
-            val currentUserId = call.getUserIdFromJWT() ?: return@get call.respondUnauthorized()
+            call.getUserIdFromJWT() ?: return@get call.respondUnauthorized()
             val targetUserId = call.parameters["userId"]?.let { UUID.fromString(it) }
                 ?: return@get call.respondBadRequest("Invalid user ID")
 

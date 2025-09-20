@@ -11,6 +11,7 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.apache.tika.Tika
 import org.slf4j.LoggerFactory
 import java.awt.Image
 import java.awt.image.BufferedImage
@@ -29,6 +30,7 @@ object ImageService {
     private val client = HttpClient(CIO)
     private val STORAGE_URL = "${SupabaseConfig.SUPABASE_URL}/storage/v1/object"
     private val logger = LoggerFactory.getLogger(ImageService::class.java)
+    private val tika = Tika()
 
     // Compression settings
     private const val TARGET_SIZE_KB = 100
@@ -39,10 +41,11 @@ object ImageService {
     private const val MAX_FILE_SIZE_MB = 20
     private const val MAX_IMAGE_DIMENSION = 4096
 
-    // Supported formats
-    private val SUPPORTED_FORMATS = setOf("jpg", "jpeg", "png", "webp", "gif")
-    private val LOSSY_FORMATS = setOf("jpg", "jpeg")
-    private val LOSSLESS_FORMATS = setOf("png", "webp", "gif")
+    // Supported MIME types
+    private val SUPPORTED_MIME_TYPES = setOf(
+        "image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif",
+        "image/bmp", "image/tiff", "image/svg+xml"
+    )
 
     suspend fun uploadImage(multipart: MultiPartData, folder: String): String {
         val tempFile = Files.createTempFile("image_upload_", ".tmp")
@@ -57,25 +60,25 @@ object ImageService {
                 }
             }
 
-            // Validate image
-            validateImage(tempFile, originalFileName)
+            // Validate image using content-based detection
+            val detectedFormat = validateImageAndDetectFormat(tempFile, originalFileName)
 
             // Determine compression settings based on folder type
             val isProfile = folder.contains("profile", ignoreCase = true)
             val compressedBytes = if (isProfile) {
-                compressProfileImage(tempFile, originalFileName)
+                compressProfileImage(tempFile, detectedFormat)
             } else {
-                compressImage(tempFile, originalFileName)
+                compressImage(tempFile, detectedFormat)
             }
 
-            // Upload to storage
-            return uploadToStorage(compressedBytes, folder, originalFileName)
+            // Upload to storage with detected format
+            return uploadToStorage(compressedBytes, folder, detectedFormat)
         } catch (e: Exception) {
             logger.error("Failed to upload image to folder $folder", e)
             throw when (e) {
                 is ImageValidationException -> e
                 is ImageProcessingException -> e
-                else -> ImageUploadException("Failed to upload image: ${e.message}")
+                else -> ImageUploadException("Failed to upload image.")
             }
         } finally {
             Files.deleteIfExists(tempFile)
@@ -91,16 +94,11 @@ object ImageService {
             ?: throw ImageValidationException("No image file found in request")
 
         val originalFileName = imagePart.originalFileName ?: "image.jpg"
-        val fileExtension = originalFileName.substringAfterLast(".", "").lowercase()
-
-        if (fileExtension !in SUPPORTED_FORMATS) {
-            throw ImageValidationException("Unsupported image format: $fileExtension. Supported: ${SUPPORTED_FORMATS.joinToString()}")
-        }
 
         return Pair(imagePart, originalFileName)
     }
 
-    private fun validateImage(file: java.nio.file.Path, fileName: String) {
+    private fun validateImageAndDetectFormat(file: java.nio.file.Path, fileName: String): ImageFormat {
         val fileSize = Files.size(file)
         val sizeMB = fileSize / (1024.0 * 1024.0)
 
@@ -108,43 +106,83 @@ object ImageService {
             throw ImageValidationException("Image size ${"%.2f".format(sizeMB)}MB exceeds maximum allowed size of ${MAX_FILE_SIZE_MB}MB")
         }
 
+        // Use Tika for content-based format detection
+        val mimeType = try {
+            tika.detect(file.toFile())
+        } catch (e: Exception) {
+            throw ImageValidationException("Failed to detect image format.")
+        }
+
+        logger.debug("Detected MIME type: $mimeType for file: $fileName")
+
+        if (mimeType !in SUPPORTED_MIME_TYPES) {
+            throw ImageValidationException("Unsupported image format: $mimeType. Supported: ${SUPPORTED_MIME_TYPES.joinToString()}")
+        }
+
         val image = ImageIO.read(file.toFile()) ?: throw ImageValidationException("Invalid or corrupted image file")
 
         if (image.width > MAX_IMAGE_DIMENSION || image.height > MAX_IMAGE_DIMENSION) {
             throw ImageValidationException("Image dimensions too large. Maximum allowed: ${MAX_IMAGE_DIMENSION}x${MAX_IMAGE_DIMENSION}")
         }
+
+        // Additional validation for problematic formats
+        if (mimeType == "image/png") {
+            validatePngImage(image)
+        }
+
+        return ImageFormat.fromMimeType(mimeType)
     }
 
-    private fun compressImage(file: java.nio.file.Path, fileName: String): ByteArray {
-        val originalImage = ImageIO.read(file.toFile())
-        require(originalImage != null) { "Failed to read image" }
+    private fun validatePngImage(image: BufferedImage) {
+        // Check for problematic color formats
+        val problematicTypes = setOf(
+            BufferedImage.TYPE_4BYTE_ABGR,
+            BufferedImage.TYPE_INT_ARGB,
+            BufferedImage.TYPE_4BYTE_ABGR_PRE,
+            BufferedImage.TYPE_INT_ARGB_PRE
+        )
 
-        val fileExtension = fileName.substringAfterLast(".", "").lowercase()
-        val format = if (fileExtension in LOSSY_FORMATS) "jpeg" else fileExtension
-
-        // Scale image if needed
-        val scaledImage = scaleImage(originalImage, MAX_DIMENSION)
-
-        // Compress based on format
-        return if (format in LOSSY_FORMATS) {
-            compressJpegImage(scaledImage, TARGET_SIZE_KB * 1024)
-        } else {
-            compressLosslessImage(scaledImage, format, TARGET_SIZE_KB * 1024)
+        if (image.type in problematicTypes) {
+            logger.warn("PNG image has potentially problematic color format: ${image.type}")
         }
     }
 
-    private fun compressProfileImage(file: java.nio.file.Path, fileName: String): ByteArray {
+    private fun compressImage(file: java.nio.file.Path, format: ImageFormat): ByteArray {
+        return try {
+            val originalImage = ImageIO.read(file.toFile()) ?: throw ImageProcessingException("Failed to read image")
+
+            // Scale image if needed
+            val scaledImage = scaleImage(originalImage, MAX_DIMENSION)
+
+            // Compress based on format
+            if (format.isLossy) {
+                compressJpegImage(scaledImage, TARGET_SIZE_KB * 1024)
+            } else {
+                compressLosslessImage(scaledImage, format, TARGET_SIZE_KB * 1024)
+            }
+        } catch (e: Exception) {
+            logger.warn("Image compression failed, attempting fallback: ${e.message}")
+            // Fallback: read original file and convert to JPEG
+            Files.readAllBytes(file).let { originalBytes ->
+                try {
+                    val image = ImageIO.read(ByteArrayInputStream(originalBytes))
+                    compressJpegImage(image ?: throw e, TARGET_SIZE_KB * 1024)
+                } catch (fallbackError: Exception) {
+                    throw ImageProcessingException("Failed to process image: ${fallbackError.message}")
+                }
+            }
+        }
+    }
+
+    private fun compressProfileImage(file: java.nio.file.Path, format: ImageFormat): ByteArray {
         val originalImage = ImageIO.read(file.toFile())
         require(originalImage != null) { "Failed to read image" }
-
-        val fileExtension = fileName.substringAfterLast(".", "").lowercase()
-        val format = if (fileExtension in LOSSY_FORMATS) "jpeg" else fileExtension
 
         // Scale image if needed
         val scaledImage = scaleImage(originalImage, PROFILE_MAX_DIMENSION)
 
         // Compress with profile-specific settings
-        return if (format in LOSSY_FORMATS) {
+        return if (format.isLossy) {
             compressJpegImage(scaledImage, PROFILE_TARGET_SIZE_KB * 1024, PROFILE_MIN_QUALITY)
         } else {
             compressLosslessImage(scaledImage, format, PROFILE_TARGET_SIZE_KB * 1024)
@@ -203,44 +241,50 @@ object ImageService {
         }
     }
 
-    private fun compressLosslessImage(image: BufferedImage, format: String, targetSize: Int): ByteArray {
+    private fun compressLosslessImage(image: BufferedImage, format: ImageFormat, targetSize: Int): ByteArray {
         val outputStream = ByteArrayOutputStream()
 
         try {
-            ImageIO.write(image, format, outputStream)
+            // Convert image to a compatible format if needed
+            val compatibleImage = if (format == ImageFormat.PNG &&
+                (image.type == BufferedImage.TYPE_4BYTE_ABGR ||
+                        image.type == BufferedImage.TYPE_INT_ARGB)) {
+                // Convert ARGB to RGB for better compatibility
+                val rgbImage = BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_RGB)
+                val g2d = rgbImage.createGraphics()
+                g2d.drawImage(image, 0, 0, null)
+                g2d.dispose()
+                rgbImage
+            } else {
+                image
+            }
+
+            ImageIO.write(compatibleImage, format.extension, outputStream)
             val compressedBytes = outputStream.toByteArray()
 
             // For lossless formats, if still too large, convert to JPEG
             if (compressedBytes.size > targetSize) {
                 logger.warn("Lossless image too large (${compressedBytes.size} bytes), converting to JPEG")
-                return compressJpegImage(image, targetSize)
+                return compressJpegImage(compatibleImage, targetSize)
             }
 
             return compressedBytes
         } catch (e: Exception) {
-            throw ImageProcessingException("Failed to compress $format image: ${e.message}")
+            logger.warn("Failed to compress ${format.extension} image, converting to JPEG: ${e.message}")
+            return compressJpegImage(image, targetSize)
         }
     }
 
-    private suspend fun uploadToStorage(imageBytes: ByteArray, folder: String, originalFileName: String): String {
-        val fileExtension = originalFileName.substringAfterLast(".", "jpg")
+    private suspend fun uploadToStorage(imageBytes: ByteArray, folder: String, format: ImageFormat): String {
         val timestamp = System.currentTimeMillis()
         val randomUUID = UUID.randomUUID().toString().take(8)
-        val newFileName = "${folder}/image_${timestamp}_${randomUUID}.$fileExtension"
-
-        val contentType = when (fileExtension.lowercase()) {
-            "jpg", "jpeg" -> "image/jpeg"
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "webp" -> "image/webp"
-            else -> "application/octet-stream"
-        }
+        val newFileName = "${folder}/image_${timestamp}_${randomUUID}.${format.extension}"
 
         val response = client.put("$STORAGE_URL/${STORAGE_BUCKET}/$newFileName") {
             headers {
                 append("apikey", SupabaseConfig.SUPABASE_KEY)
                 append("Authorization", "Bearer ${SupabaseConfig.SUPABASE_KEY}")
-                append("Content-Type", contentType)
+                append("Content-Type", format.mimeType)
             }
             setBody(imageBytes)
         }
@@ -248,7 +292,7 @@ object ImageService {
         if (!response.status.isSuccess()) {
             val errorBody = response.bodyAsText()
             logger.error("Supabase upload failed: ${response.status} - $errorBody")
-            throw ImageUploadException("Failed to upload image to storage: ${response.status}")
+            throw ImageUploadException("Failed to upload image to storage.")
         }
 
         return "$STORAGE_URL/public/${STORAGE_BUCKET}/$newFileName"
@@ -285,78 +329,40 @@ object ImageService {
         }
     }
 
-    suspend fun getImageDimensions(imageUrl: String): Pair<Int, Int> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val response = client.get(imageUrl)
-                if (response.status.isSuccess()) {
-                    val bytes = response.readBytes()
-                    val image = ImageIO.read(ByteArrayInputStream(bytes))
-                    if (image != null) {
-                        Pair(image.width, image.height)
-                    } else {
-                        throw ImageProcessingException("Failed to read image dimensions")
-                    }
-                } else {
-                    throw ImageUploadException("Failed to fetch image: ${response.status}")
-                }
-            } catch (e: Exception) {
-                throw ImageUploadException("Failed to get image dimensions: ${e.message}")
-            }
-        }
-    }
-
-
     /**
      * Generates a BlurHash string from image bytes
-     * @param imageBytes the image bytes to generate blurhash from
-     * @return BlurHash string representation
-     * @throws ImageProcessingException if blurhash generation fails
      */
     fun generateBlurHash(imageBytes: ByteArray): String {
         return try {
             val image = ImageIO.read(ByteArrayInputStream(imageBytes))
-            if (image == null) {
-                throw ImageProcessingException("Failed to read image for blurhash generation")
-            }
+                ?: throw ImageProcessingException("Failed to read image for blur hash generation")
 
             generateBlurHashFromImage(image)
         } catch (e: Exception) {
-            logger.error("Failed to generate blurhash", e)
-            throw ImageProcessingException("Blurhash generation failed: ${e.message}")
+            logger.error("Failed to generate blur hash", e)
+            throw ImageProcessingException("Blur hash generation failed: ${e.message}")
         }
     }
 
     /**
      * Generates a BlurHash string from a BufferedImage
-     * @param image the image to generate blurhash from
-     * @param componentsX number of components in X direction (default: 4)
-     * @param componentsY number of components in Y direction (default: 3)
-     * @return BlurHash string representation
      */
     fun generateBlurHashFromImage(image: BufferedImage, componentsX: Int = 4, componentsY: Int = 3): String {
         validateBlurHashComponents(componentsX, componentsY)
 
-        // Resize image to optimal size for blurhash generation (smaller is faster)
+        // Resize image to optimal size for blur hash generation
         val optimizedImage = resizeForBlurHash(image, maxWidth = 64, maxHeight = 64)
 
-        // Generate blurhash using our pure Kotlin implementation
+        // Generate blur hash using our pure Kotlin implementation
         return BlurHashEncoder.encode(optimizedImage, componentsX, componentsY)
     }
 
-    /**
-     * Validates blurhash component parameters
-     * @throws IllegalArgumentException if components are invalid
-     */
     private fun validateBlurHashComponents(componentsX: Int, componentsY: Int) {
         require(componentsX in 1..9) { "componentsX must be between 1 and 9" }
         require(componentsY in 1..9) { "componentsY must be between 1 and 9" }
         require(componentsX * componentsY <= 81) { "Total components (x*y) must not exceed 81" }
     }
 
-    /**
-     * Resizes image for optimal blurhash generation performance
-     */
     private fun resizeForBlurHash(originalImage: BufferedImage, maxWidth: Int, maxHeight: Int): BufferedImage {
         if (originalImage.width <= maxWidth && originalImage.height <= maxHeight) {
             return originalImage
@@ -373,7 +379,7 @@ object ImageService {
         val resizedImage = BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB)
         val g2d = resizedImage.createGraphics()
         g2d.drawImage(
-            originalImage.getScaledInstance(newWidth, newHeight, java.awt.Image.SCALE_SMOOTH),
+            originalImage.getScaledInstance(newWidth, newHeight, Image.SCALE_SMOOTH),
             0, 0, null
         )
         g2d.dispose()
@@ -382,53 +388,7 @@ object ImageService {
     }
 
     /**
-     * Extracts RGB pixels from BufferedImage
-     */
-    private fun extractPixels(image: BufferedImage): IntArray {
-        val width = image.width
-        val height = image.height
-        val pixels = IntArray(width * height)
-
-        image.getRGB(0, 0, width, height, pixels, 0, width)
-        return pixels
-    }
-
-    /**
-     * Decodes a BlurHash string back to an image (for verification/testing)
-     */
-    fun decodeBlurHash(blurHash: String, width: Int = 32, height: Int = 32): BufferedImage? {
-        return try {
-            // Note: Decoding is not implemented in this version
-            // You can implement it if needed using the same algorithm
-            null
-        } catch (e: Exception) {
-            logger.warn("Failed to decode blurhash: $blurHash", e)
-            null
-        }
-    }
-
-    /**
-     * Validates if a string is a valid BlurHash
-     */
-    fun isValidBlurHash(blurHash: String): Boolean {
-        return try {
-            // Basic validation: check length and character set
-            if (blurHash.length < 6) return false
-
-            // BlurHash uses Base83 encoding (0-9, A-Z, a-z, #$%*+,-.:;=?@[]^_{|}~)
-            val validChars = CharRange('0', '9') +
-                    CharRange('A', 'Z') +
-                    CharRange('a', 'z') +
-                    "#\$%*+,-.:;=?@[]^_{|}~".toSet()
-
-            blurHash.all { it in validChars }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    /**
-     * Generates blurhash with optimized components based on image aspect ratio
+     * Generates blur hash with optimized components based on image aspect ratio
      */
     fun generateOptimizedBlurHash(imageBytes: ByteArray): String {
         val image = ImageIO.read(ByteArrayInputStream(imageBytes))
@@ -436,7 +396,7 @@ object ImageService {
 
         val aspectRatio = image.width.toFloat() / image.height.toFloat()
 
-        // Adjust components based on aspect ratio for better visual results
+        // Adjust components based on aspect ratio
         val (componentsX, componentsY) = when {
             aspectRatio > 1.5 -> Pair(5, 3)  // Wide image
             aspectRatio < 0.67 -> Pair(3, 5) // Tall image
@@ -447,7 +407,7 @@ object ImageService {
     }
 
     /**
-     * Enhanced upload method that includes blurhash generation
+     * Enhanced upload method that includes blur hash generation
      */
     suspend fun uploadImageWithBlurHash(multipart: MultiPartData, folder: String): Pair<String, String> {
         val tempFile = Files.createTempFile("image_upload_", ".tmp")
@@ -462,23 +422,24 @@ object ImageService {
                 }
             }
 
-            validateImage(tempFile, originalFileName)
+            // Validate and detect format
+            val detectedFormat = validateImageAndDetectFormat(tempFile, originalFileName)
 
-            // Read image bytes for blurhash generation
+            // Read image bytes for blur hash generation
             val imageBytes = Files.readAllBytes(tempFile)
 
-            // Generate blurhash before compression (better quality)
+            // Generate blur hash before compression (better quality)
             val blurHash = generateOptimizedBlurHash(imageBytes)
 
             // Compress and upload image
             val isProfile = folder.contains("profile", ignoreCase = true)
             val compressedBytes = if (isProfile) {
-                compressProfileImage(tempFile, originalFileName)
+                compressProfileImage(tempFile, detectedFormat)
             } else {
-                compressImage(tempFile, originalFileName)
+                compressImage(tempFile, detectedFormat)
             }
 
-            val imageUrl = uploadToStorage(compressedBytes, folder, originalFileName)
+            val imageUrl = uploadToStorage(compressedBytes, folder, detectedFormat)
 
             return Pair(imageUrl, blurHash)
         } finally {
@@ -487,21 +448,36 @@ object ImageService {
     }
 }
 
+// Image format data class
+enum class ImageFormat(val mimeType: String, val extension: String, val isLossy: Boolean) {
+    JPEG("image/jpeg", "jpg", true),
+    PNG("image/png", "png", false),
+    WEBP("image/webp", "webp", false),
+    GIF("image/gif", "gif", false),
+    BMP("image/bmp", "bmp", false),
+    TIFF("image/tiff", "tiff", false);
 
-// Extension function for character ranges
-private operator fun CharRange.plus(other: CharRange): Set<Char> {
-    return this.toSet() + other.toSet()
+    companion object {
+        fun fromMimeType(mimeType: String): ImageFormat {
+            return when (mimeType.lowercase()) {
+                "image/jpeg", "image/jpg" -> JPEG
+                "image/png" -> PNG
+                "image/webp" -> WEBP
+                "image/gif" -> GIF
+                "image/bmp" -> BMP
+                "image/tiff" -> TIFF
+                else -> throw ImageValidationException("Unsupported image MIME type: $mimeType")
+            }
+        }
+    }
 }
 
-private operator fun Set<Char>.plus(other: CharRange): Set<Char> {
-    return this + other.toSet()
-}
+// Extension functions
+private operator fun CharRange.plus(other: CharRange): Set<Char> = this.toSet() + other.toSet()
+private operator fun Set<Char>.plus(other: CharRange): Set<Char> = this + other.toSet()
+private operator fun Set<Char>.plus(string: String): Set<Char> = this + string.toSet()
 
-private operator fun Set<Char>.plus(string: String): Set<Char> {
-    return this + string.toSet()
-}
-
-    // Custom exceptions
+// Custom exceptions
 class ImageUploadException(message: String) : IllegalStateException(message)
 class ImageValidationException(message: String) : IllegalArgumentException(message)
 class ImageProcessingException(message: String) : IllegalStateException(message)
