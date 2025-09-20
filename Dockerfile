@@ -11,6 +11,11 @@ RUN gradle buildFatJar --no-daemon
 # Runtime stage
 FROM eclipse-temurin:17-jre-jammy
 
+# Install required native libs for FFmpeg/JavaCV
+RUN apt-get update && apt-get install -y \
+    libxcb1 libxcb-shm0 libxcb-xfixes0 libx11-6 libxext6 libgl1 \
+ && rm -rf /var/lib/apt/lists/*
+ 
 # Expose port
 EXPOSE 8080
 
